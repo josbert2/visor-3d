@@ -437,10 +437,16 @@
     new MutationObserver(guard).observe(panel, { attributes: true, attributeFilter: ['inert', 'aria-hidden', 'style'] });
     document.documentElement.append(panel);
 
-    var scenes = (await atrapar(1500))
-      .map(s => ({ s, list: piezas(s) }))
-      .filter(x => x.list.length)
-      .sort((a, b) => vertices(b.list) - vertices(a.list));
+    // si el modelo todavia carga o el visor no dibujo en esa ventana, se reintenta solo (~30 s).
+    // Las escenas de 3 vertices son el triangulo de pantalla completa del post-proceso
+    var scenes = [];
+    for (var intento = 0; intento < 12 && !scenes.length && panel.isConnected; intento++) {
+      if (intento) title.querySelector('div').textContent = 'Esperando que el visor dibuje el modelo... (' + intento + ')';
+      scenes = (await atrapar(1500))
+        .map(s => ({ s, list: piezas(s) }))
+        .filter(x => x.list.length && vertices(x.list) > 3)
+        .sort((a, b) => vertices(b.list) - vertices(a.list));
+    }
     // la camara se guarda en el frame siguiente al que encontro la escena
     if (scenes.some(x => !(S.cam && S.cam.has(x.s)))) {
       window.dispatchEvent(new Event('resize'));
@@ -448,7 +454,7 @@
     }
     if (!scenes.length) {
       title.querySelector('b').textContent = 'No encontre ninguna escena';
-      title.querySelector('div').textContent = 'Mueve el modelo y toca Releer';
+      title.querySelector('div').textContent = 'Espera que termine de cargar, mueve el modelo y toca Releer';
       return;
     }
 
