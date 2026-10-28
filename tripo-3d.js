@@ -112,6 +112,16 @@
 
   // GLB escrito a mano: la geometria ya viene con la posicion del mundo aplicada,
   // asi no dependemos del GLTFExporter (se trababa con modelos de ~1M vertices)
+  // three le aplica a las UV la transformacion de la textura (repeat/offset/rotation) en el shader.
+  // Hay visores que la usan para UV cuantizadas (Meshy: repeat ~16): sin hornearla, las texturas salen corridas
+  function uvTextura(o) {
+    var m = [].concat(o.material)[0], t = m && MAPAS.map(k => m[k]).find(x => x && x.isTexture);
+    if (!t) return (u, v) => [u, v];
+    if (t.matrixAutoUpdate) t.updateMatrix();
+    var e = t.matrix.elements;
+    return (u, v) => [e[0] * u + e[3] * v + e[6], e[1] * u + e[4] * v + e[7]];
+  }
+
   async function glb(list, name, avance) {
     var json = {
       asset: { version: '2.0', generator: 'tripo-descargas canvas.js' },
@@ -196,7 +206,8 @@
       }
       if (a.uv) {
         var uv = new Float32Array(cnt * 2);
-        for (i = 0; i < cnt; i++) { uv[i * 2] = a.uv.getX(i); uv[i * 2 + 1] = a.uv.getY(i); }
+        var tuv = uvTextura(o);
+        for (i = 0; i < cnt; i++) { var w = tuv(a.uv.getX(i), a.uv.getY(i)); uv[i * 2] = w[0]; uv[i * 2 + 1] = w[1]; }
         attrs.TEXCOORD_0 = accesor(uv, 'VEC2');
       }
       if (a.color) {
@@ -265,7 +276,8 @@
         var l = Math.hypot(nx, ny, nz) || 1;
         lineas.push('vn ' + r6(nx / l) + ' ' + r6(ny / l) + ' ' + r6(nz / l));
       }
-      if (uv) for (i = 0; i < uv.count; i++) lineas.push('vt ' + r6(uv.getX(i)) + ' ' + r6(uv.getY(i)));
+      var tuv = uvTextura(o);
+      if (uv) for (i = 0; i < uv.count; i++) { var w = tuv(uv.getX(i), uv.getY(i)); lineas.push('vt ' + r6(w[0]) + ' ' + r6(w[1])); }
 
       var m = [].concat(o.material)[0];
       if (m && !mats.has(m)) {
