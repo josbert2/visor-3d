@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visor de modelos</title>
+<style>
+  :root { --bg: #0f1012; --panel: #141518; --line: #2a2c31; --text: #e8e8ea; --muted: #8b8d94; --primary: #7c9cff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, sans-serif; }
+  #vista { position: fixed; inset: 0; }
+  #barra { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  #info { flex: 1; min-width: 200px; color: var(--muted); }
+  #info b { color: var(--text); }
+  button, label.btn { height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line); background: #1d1f23;
+    color: inherit; font: inherit; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; }
+  label.btn { background: var(--primary); border-color: var(--primary); color: #0b0d14; font-weight: 600; }
+  #soltar { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; color: var(--muted); font-size: 15px; text-align: center; padding: 16px; }
+  body.arrastrando #soltar { background: #7c9cff22; color: var(--text); }
+</style>
+</head>
+<body>
+<div id="vista"></div>
+<div id="soltar">Arrastra aca un .glb, .gltf, o el .obj junto a su .mtl y texturas</div>
+<div id="barra">
+  <div id="info"><b>Sin modelo</b></div>
+  <button id="wire">Malla</button>
+  <button id="fondo">Fondo</button>
+  <button id="centrar">Centrar</button>
+  <label class="btn">Abrir archivos<input id="archivos" type="file" multiple hidden accept=".glb,.gltf,.obj,.mtl,.png,.jpg,.jpeg,.webp,.bin"></label>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.183.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.183.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const vista = document.getElementById('vista');
+const info = document.getElementById('info');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+vista.append(renderer.domElement);
+
+const scene = new THREE.Scene();
+const fondos = [0x0f1012, 0x3a3d44, 0xf2f2f2];
+let fondo = 0;
+scene.background = new THREE.Color(fondos[0]);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
+camera.position.set(2, 1.5, 3);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+let modelo = null;
+
+function tamano() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', tamano);
+tamano();
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+
+function centrar() {
+  if (!modelo) return;
+  const caja = new THREE.Box3().setFromObject(modelo);
+  const centro = caja.getCenter(new THREE.Vector3());
+  const r = caja.getSize(new THREE.Vector3()).length() / 2 || 1;
+  controls.target.copy(centro);
+  camera.near = r / 100; camera.far = r * 100; camera.updateProjectionMatrix();
+  camera.position.copy(centro).add(new THREE.Vector3(1, 0.6, 1.4).normalize().multiplyScalar(r * 2.4));
+}
+
+function mostrar(obj, nombre) {
+  if (modelo) scene.remove(modelo);
+  modelo = obj;
+  scene.add(obj);
+  let v = 0, piezas = 0;
+  obj.traverse(o => { if (o.geometry?.attributes.position) { v += o.geometry.attributes.position.count; piezas++; } });
+  info.innerHTML = `<b></b> - ${piezas} piezas - ${v.toLocaleString()} vertices`;
+  info.querySelector('b').textContent = nombre;
+  centrar();
+}
+
+async function cargar(files) {
+  files = [...files];
+  const urls = new Map(files.map(f => [f.name, URL.createObjectURL(f)]));
+  const manager = new THREE.LoadingManager();
+  // el .obj y el .gltf piden sus texturas por nombre: se las damos desde lo que soltaste
+  manager.setURLModifier(u => urls.get(decodeURIComponent(u.split('/').pop())) || u);
+  const principal = files.find(f => /\.(glb|gltf)$/i.test(f.name)) || files.find(f => /\.obj$/i.test(f.name));
+  if (!principal) { info.innerHTML = '<b>Falta el .glb, .gltf u .obj</b>'; return; }
+  info.innerHTML = '<b>Cargando...</b>';
+  try {
+    if (/\.obj$/i.test(principal.name)) {
+      const loader = new OBJLoader(manager);
+      const mtl = files.find(f => /\.mtl$/i.test(f.name));
+      if (mtl) {
+        const mats = new MTLLoader(manager).parse(await mtl.text(), '');
+        mats.preload();
+        loader.setMaterials(mats);
+      }
+      mostrar(loader.parse(await principal.text()), principal.name);
+    } else {
+      const gltf = await new GLTFLoader(manager).loadAsync(urls.get(principal.name));
+      mostrar(gltf.scene, principal.name);
+    }
+  } catch (e) {
+    console.error(e);
+    info.innerHTML = '<b>No se pudo abrir</b> - ' + (e.message || e);
+  }
+}
+
+document.getElementById('archivos').onchange = e => cargar(e.target.files);
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('arrastrando'); });
+addEventListener('dragleave', () => document.body.classList.remove('arrastrando'));
+addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('arrastrando'); cargar(e.dataTransfer.files); });
+document.getElementById('centrar').onclick = centrar;
+document.getElementById('fondo').onclick = () => { fondo = (fondo + 1) % fondos.length; scene.background.set(fondos[fondo]); };
+document.getElementById('wire').onclick = () => modelo?.traverse(o => [].concat(o.material || []).forEach(m => { m.wireframe = !m.wireframe; }));
+</script>
+</body>
+</html>
