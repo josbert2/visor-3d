@@ -21,8 +21,10 @@
         }
       },
     }));
-    // Tres renderiza a pedido: un resize lo obliga a dibujar
+    // Tres renderiza a pedido: un resize y un arrastre de 1 px sobre el canvas (y de vuelta)
+    // lo obligan a dibujar sin mover el modelo
     window.dispatchEvent(new Event('resize'));
+    empujar();
     return new Promise(res => setTimeout(() => {
       TRAMPAS.forEach(k => delete Object.prototype[k]);
       res([...S.scenes]);
@@ -40,14 +42,32 @@
     };
   }
 
+  function canvasPrincipal() {
+    var cs = [...document.querySelectorAll('canvas[data-engine^="three"]')];
+    if (!cs.length) cs = [...document.querySelectorAll('canvas')];
+    return cs.sort((a, b) => b.width * b.height - a.width * a.height)[0];
+  }
+  function empujar() {
+    var c = canvasPrincipal();
+    if (!c) return;
+    var r = c.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+    var ev = (tipo, dx) => c.dispatchEvent(new PointerEvent(tipo, { bubbles: true, clientX: x + dx, clientY: y, pointerId: 1, pointerType: 'mouse', button: 0, buttons: tipo === 'pointerup' ? 0 : 1, isPrimary: true }));
+    ev('pointerdown', 0);
+    [1, 0].forEach((dx, i) => setTimeout(() => ev('pointermove', dx), 40 + i * 40));
+    setTimeout(() => ev('pointerup', 0), 140);
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 600);
+  }
   var esHelper = o => { for (; o; o = o.parent) if (/Helper/.test(o.type)) return true; return false; };
+  // lo que pone el visor y no es del modelo: plano de sombra, fondos y grillas hechos con shaders, sprites
+  var decorado = o => [].concat(o.material).every(m => m && (m.isShadowMaterial || m.isSpriteMaterial ||
+    (m.isShaderMaterial || m.isRawShaderMaterial) && !(m.uniforms && Object.values(m.uniforms).some(u => u && u.value && u.value.isTexture)) && o.geometry.attributes.position.count < 2000));
   var visible = o => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
 
   function piezas(scene) {
     var out = [];
     scene.updateMatrixWorld(true);
     scene.traverse(o => {
-      if ((o.isMesh || o.isPoints) && o.geometry && o.geometry.attributes.position && visible(o) && !esHelper(o) && !/Line/.test(o.type)) out.push(o);
+      if ((o.isMesh || o.isPoints) && o.geometry && o.geometry.attributes.position && visible(o) && !esHelper(o) && !/Line/.test(o.type) && !decorado(o)) out.push(o);
     });
     return out;
   }
@@ -288,7 +308,7 @@
 
   // corre despues del frame de la app (rAF dentro de rAF), cuando el buffer todavia tiene la imagen
   function captura(name) {
-    var c = document.querySelector('canvas[data-engine^="three"]') || document.querySelector('canvas');
+    var c = canvasPrincipal();
     if (!c) return;
     window.dispatchEvent(new Event('resize'));
     requestAnimationFrame(() => requestAnimationFrame(() => c.toBlob(b => b && guardar(b, name + '-captura.png'))));
